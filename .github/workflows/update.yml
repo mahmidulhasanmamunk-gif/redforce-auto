@@ -1,9 +1,9 @@
-name: Auto Update RedForce M3U
+name: Update RedForce M3U
 
 on:
   schedule:
     - cron: '0 */2 * * *'  # প্রতি ২ ঘণ্টায়
-  workflow_dispatch:       # ম্যানুয়াল রান
+  workflow_dispatch:
 
 jobs:
   update:
@@ -16,8 +16,8 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install requests
-        run: pip install requests
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4
 
       - name: Run scraper
         run: python scraper.py
@@ -27,5 +27,5 @@ jobs:
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           git add redforce.m3u
-          git commit -m "Auto update: $(date +'%Y-%m-%d %H:%M')" || exit 0
-          git pushpush
+          git commit -m "Auto update: $(date)" || exit 0
+          git push
