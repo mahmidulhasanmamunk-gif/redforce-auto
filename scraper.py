@@ -1,73 +1,80 @@
 import requests
+import re
+import json
+from urllib.parse import urljoin
 from bs4 import BeautifulSoup
-import datetime
 
 BASE_URL = "http://redforce.live"
-CATEGORIES = ["Bangla", "English", "Hindi", "Islamic", "Kids", "Sports"]
-OUTPUT_FILE = "redforce.m3u"
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
+}
 
-def fetch_redforce_links():
+def get_channels():
     try:
-        r = requests.get(BASE_URL, timeout=10)
-        if r.status_code != 200:
-            print("RedForce site down - using fallback")
+        response = requests.get(BASE_URL, headers=HEADERS, timeout=15)
+        if response.status_code != 200:
+            print(f"Failed to load: {response.status_code}")
             return []
-        soup = BeautifulSoup(r.text, "html.parser")
-        links = []
-        for tag in soup.find_all("a", href=True):
-            if ".m3u8" in tag["href"]:
-                link = tag["href"] if tag["href"].startswith("http") else BASE_URL + tag["href"]
-                links.append(link)
-        return links
-    except:
-        print("RedForce fetch failed - using fallback")
+
+        soup = BeautifulSoup(response.text, "html.parser")
+        
+        # Extract active users and categories
+        active_users = re.search(r'Active Users: (\d+)', response.text)
+        print(f"Active Users: {active_users.group(1) if active_users else 'Unknown'}")
+
+        # Find channel data from JS or HTML
+        channels = []
+        
+        # Look for JS array with channel data (common in IPTV sites)
+        js_match = re.search(r'channels\s*=\s*(\[.*?\]);', response.text, re.DOTALL | re.IGNORECASE)
+        if js_match:
+            try:
+                data = json.loads(js_match.group(1))
+                for ch in data:
+                    name = ch.get('name', 'Unknown')
+                    stream = ch.get('stream') or ch.get('url')
+                    if stream and '.m3u8' in stream:
+                        url = stream if stream.startswith('http') else urljoin(BASE_URL, stream)
+                        channels.append({'name': name, 'url': url})
+            except:
+                pass
+
+        # Fallback: Extract from HTML links (channel logos)
+        if not channels:
+            channel_links = soup.find_all('a', href=True)
+            for link in channel_links:
+                href = link.get('href', '')
+                if '.m3u8' in href:
+                    name = link.get('title') or link.text.strip() or 'Channel'
+                    url = href if href.startswith('http') else urljoin(BASE_URL, href)
+                    channels.append({'name': name, 'url': url})
+
+        # Add categories as groups
+        categories = ['Bangla', 'English', 'Hindi', 'Islamic', 'Kids', 'Sports']
+        for i, ch in enumerate(channels):
+            ch['group'] = categories[i % len(categories)]
+
+        print(f"Found {len(channels)} channels")
+        return channels
+
+    except Exception as e:
+        print(f"Error: {e}")
         return []
 
-# Fallback: Public BDIX M3U (Bangla, Kids, Sports channels)
-FALLBACK_M3U = """#EXTM3U
-# Fallback BDIX IPTV - Auto Updated
-# Channels: Bangla, Kids, Sports, etc.
-
-# Bangla Channels
-#EXTINF:-1 group-title="Bangla",GTV HD
-http://bdixsports.com:8080/live/abc123/gtv/playlist.m3u8
-#EXTINF:-1 group-title="Bangla",Channel i
-http://bdixsports.com:8080/live/abc123/channeli/playlist.m3u8
-#EXTINF:-1 group-title="Bangla",Somoy TV
-http://bdixsports.com:8080/live/abc123/somoy/playlist.m3u8
-
-# Kids Channels
-#EXTINF:-1 group-title="Kids",Cartoon Network HD
-http://bdixsports.com:8080/live/abc123/cartoon/playlist.m3u8
-#EXTINF:-1 group-title="Kids",Pogo
-http://bdixsports.com:8080/live/abc123/pogo/playlist.m3u8
-#EXTINF:-1 group-title="Kids",Nick Jr
-http://bdixsports.com:8080/live/abc123/nickjr/playlist.m3u8
-
-# Sports Channels
-#EXTINF:-1 group-title="Sports",Star Sports HD1
-http://bdixsports.com:8080/live/abc123/starsports1/playlist.m3u8
-#EXTINF:-1 group-title="Sports",Gazi TV
-http://bdixsports.com:8080/live/abc123/gazitv/playlist.m3u8
-
-# More channels can be added from public sources
-"""
-
-def build_playlist():
-    links = fetch_redforce_links()
-    if links:
-        playlist = "#EXTM3U\n"
-        playlist += f"# RedForce Channels - Updated: {datetime.datetime.now()}\n\n"
-        for i, link in enumerate(links):
-            name = f"RedForce Channel {i+1}"
-            playlist += f'#EXTINF:-1 tvg-logo="" group-title="RedForce",{name}\n{link}\n'
-        return playlist
-    else:
-        print("Using fallback M3U")
-        return FALLBACK_M3U
+def generate_m3u(channels):
+    m3u = "#EXTM3U\n"
+    m3u += f"# RedForce IPTV - Auto Updated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+    m3u += "# Source: http://redforce.live\n\n"
+    
+    for ch in channels:
+        m3u += f'#EXTINF:-1 tvg-logo="" group-title="{ch["group"]}",{ch["name"]}\n'
+        m3u += f'{ch["url"]}\n'
+    
+    return m3u
 
 if __name__ == "__main__":
-    content = build_playlist()
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+    channels = get_channels()
+    content = generate_m3u(channels)
+    with open("redforce.m3u", "w", encoding="utf-8") as f:
         f.write(content)
-    print(f"Generated {OUTPUT_FILE} - Ready!")
+    print(f"Generated redforce.m3u with {len(channels)} channels")
