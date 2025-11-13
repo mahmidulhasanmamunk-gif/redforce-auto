@@ -11,26 +11,40 @@ def get_channels():
     try:
         response = requests.get(BASE_URL, headers=HEADERS, timeout=15)
         if response.status_code != 200:
-            print(f"Failed to load page: {response.status_code}")
+            print("Failed to load page")
             return []
 
         channels = []
 
-        # Step 1: Find all .m3u8 links (these are direct stream URLs)
-        m3u8_pattern = r'href=["\']([^"\']*\.m3u8[^"\']*)["\']'
-        m3u8_links = re.findall(m3u8_pattern, response.text)
+        # Step 1: Extract from JavaScript (var channels = [...])
+        js_match = re.search(r'var\s+channels\s*=\s*(\[[\s\S]*?\]);', response.text, re.DOTALL)
+        if js_match:
+            try:
+                import json
+                data = json.loads(js_match.group(1))
+                for ch in data:
+                    stream = ch.get('stream_url') or ch.get('url') or ch.get('stream')
+                    if stream and '.m3u8' in str(stream):
+                        name = ch.get('name', 'Unknown')
+                        url = stream if str(stream).startswith('http') else urljoin(BASE_URL, str(stream))
+                        channels.append({'name': name.strip(), 'url': url})
+                if channels:
+                    print(f"Success: Found {len(channels)} channels from JS")
+                    return channels
+            except:
+                pass
 
-        # Step 2: Extract channel names from <div class="channel-name">
-        name_pattern = r'<div[^>]+class=["\'][^"\']*channel-name[^"\']*["\'][^>]*>([^<]+)</div>'
-        names = re.findall(name_pattern, response.text)
+        # Step 2: Fallback - Find all .m3u8 links
+        m3u8_links = re.findall(r'["\']([^"\']*\.m3u8[^"\']*)["\']', response.text)
+        name_elements = re.findall(r'channel[^>]*name[^>]*>([^<]+)', response.text, re.IGNORECASE)
 
-        # Step 3: Match links with names
         for i, link in enumerate(m3u8_links):
-            name = names[i].strip() if i < len(names) else f"Channel {i+1}"
+            name = name_elements[i].strip() if i < len(name_elements) else f"Channel {i+1}"
             full_url = link if link.startswith('http') else urljoin(BASE_URL, link)
-            channels.append({'name': name, 'url': full_url})
+            if full_url not in [c['url'] for c in channels]:
+                channels.append({'name': name, 'url': full_url})
 
-        print(f"Found {len(channels)} channels")
+        print(f"Success: Found {len(channels)} channels (total)")
         return channels
 
     except Exception as e:
@@ -38,6 +52,9 @@ def get_channels():
         return []
 
 def generate_m3u(channels):
+    if not channels:
+        return "#EXTM3U\n# No channels found - check connection or site\n"
+    
     m3u = "#EXTM3U\n"
     for ch in channels:
         m3u += f'#EXTINF:-1 tvg-logo="" group-title="RedForce",{ch["name"]}\n'
@@ -49,4 +66,4 @@ if __name__ == "__main__":
     m3u_content = generate_m3u(channels)
     with open("redforce.m3u", "w", encoding="utf-8") as f:
         f.write(m3u_content)
-    print(f"Generated redforce.m3u with {len(channels)} channels")
+    print(f"redforce.m3u created with {len(channels)} channels")
